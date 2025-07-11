@@ -25,7 +25,7 @@ and EmAI will send the text to OpenAI and return a clean summary.
 ### 1  Clone
 
 ```bash
-git clone https://github.com/YOURNAME/emai.git
+git clone https://github.com/youngwiseone/emai.git
 cd emai
 ```
 
