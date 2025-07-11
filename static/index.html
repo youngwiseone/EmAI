@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="utf-8" />
+  <title>EmAI - Email Helper</title>
+
+  <!-- Pico.css -->
+  <link rel="stylesheet"
+        href="https://unpkg.com/@picocss/pico@1.*/css/pico.min.css" />
+
+  <style>
+    :root { --drop-border: var(--pico-muted-border-color); }
+
+    /* header padding now = 2 × global spacing (≈ 2 rem) */
+    header.hero {
+      padding-block: calc(var(--spacing) * 2);   /* top & bottom */
+    }
+
+    .contrast {
+      padding-block: calc(var(--spacing) * 2);   /* top & bottom */
+      margin-block: calc(var(--spacing) * 1);
+    }
+
+    .drop-zone {
+      border: var(--pico-border-width) dashed var(--drop-border);
+      background: var(--pico-card-background-color);
+      padding: 4rem 1rem;
+      text-align: center;
+      cursor: pointer;
+      transition: border-color .2s;
+    }
+    .drop-zone.dragover { --drop-border: var(--pico-primary); }
+
+    textarea { min-height: 12rem; }
+    #customPrompt { display:none; }
+    #loadingBar  { display:none; margin-top:0.5rem; width:100%; }
+    #resetBtn    { display:none; }
+  </style>
+</head>
+<body class="container">
+
+<header class="hero">
+  <hgroup>
+    <h1>EmAI - Email Helper</h1>
+    <h2>Drag → edit → summarise</h2>
+  </hgroup>
+</header>
+
+<!-- ─────  Step 1: Upload  ───── -->
+<details id="stepUpload" open>
+  <summary><strong>1. Upload e-mail file</strong></summary>
+
+  <div id="drop" class="drop-zone">
+    <strong>Drop .eml or .msg here</strong><br>
+    <small>(or click to choose a file)</small>
+    <input type="file" accept=".eml,.msg" style="display:none;">
+  </div>
+</details>
+
+<!-- ─────  Step 2: Edit & Prompt  ───── -->
+<details id="stepEdit" style="display:none;">
+  <summary><strong>2. Edit body & choose prompt</strong></summary>
+
+  <header><strong id="hdr"></strong></header>
+
+  <label for="promptSelect">Prompt</label>
+  <select id="promptSelect">
+    <option value="bullet">Summarise this e-mail in 3 bullet points</option>
+    <option value="takeaways">Tell me the important take-aways from this e-mail</option>
+    <option value="custom">Custom prompt…</option>
+  </select>
+
+  <input id="customPrompt" type="text" placeholder="Type custom prompt">
+
+  <label for="body">E-mail body <small>(edit before summarising)</small></label>
+  <textarea id="body" spellcheck="false"></textarea>
+
+  <button id="summarise" class="primary" disabled>Summarise with GPT</button>
+  <progress id="loadingBar"></progress>
+</details>
+
+<!-- ─────  Step 3: Result  ───── -->
+<details id="stepResult" style="display:none;">
+  <summary><strong>3. Summary result</strong></summary>
+
+  <section id="result"></section>
+  <button id="resetBtn" class="secondary">Start new e-mail</button>
+</details>
+
+<footer class="secondary"><small>Powered by FastAPI · Pico.css · OpenAI</small></footer>
+
+<!-- ─────────────  JS  ───────────── -->
+<script>
+const drop      = document.getElementById('drop');
+const fileInput = drop.querySelector('input[type=file]');
+const stepUpload= document.getElementById('stepUpload');
+const stepEdit  = document.getElementById('stepEdit');
+const stepResult= document.getElementById('stepResult');
+
+const hdr   = document.getElementById('hdr');
+const bodyTA= document.getElementById('body');
+const btn   = document.getElementById('summarise');
+const res   = document.getElementById('result');
+const sel   = document.getElementById('promptSelect');
+const custom= document.getElementById('customPrompt');
+const reset = document.getElementById('resetBtn');
+const load  = document.getElementById('loadingBar');
+
+/* ---------- helpers ---------- */
+function openStep(which){
+  [stepUpload, stepEdit, stepResult].forEach(s=>{
+    s.open = false; s.style.display='';
+  });
+  which.open = true;
+}
+function resetWorkflow(){
+  fileInput.value = '';
+  hdr.textContent = '';
+  bodyTA.value    = '';
+  btn.setAttribute('disabled', true);
+  res.innerHTML   = '';
+  reset.style.display = 'none';
+  custom.style.display = 'none';
+  sel.value = 'bullet';
+  load.style.display = 'none';
+  openStep(stepUpload);
+}
+
+/* ---------- upload handling ---------- */
+function handleFile(file){
+  const form = new FormData(); form.append('file', file);
+  fetch('/parse', {method:'POST', body:form})
+    .then(r=>r.json()).then(j=>{
+      if (j.error){ alert(j.error); return; }
+      hdr.textContent = `${j.subject} — ${j.sender}`;
+      bodyTA.value    = j.body || '(empty)';
+      btn.removeAttribute('disabled');
+      res.innerHTML = '';
+      openStep(stepEdit);
+    });
+}
+drop.addEventListener('click', ()=> fileInput.click());
+fileInput.addEventListener('change', e=> handleFile(e.target.files[0]));
+
+['dragenter','dragover'].forEach(ev=>
+  drop.addEventListener(ev, e=>{
+    e.preventDefault(); drop.classList.add('dragover');
+  }));
+['dragleave','drop'].forEach(ev=>
+  drop.addEventListener(ev, e=>{
+    e.preventDefault(); drop.classList.remove('dragover');
+  }));
+drop.addEventListener('drop', e=> handleFile(e.dataTransfer.files[0]));
+
+/* ---------- prompt selector ---------- */
+sel.addEventListener('change', ()=> {
+  custom.style.display = sel.value==='custom' ? 'block':'none';
+});
+
+/* ---------- summarise ---------- */
+btn.addEventListener('click', ()=>{
+  btn.setAttribute('disabled', true);
+  load.style.display = 'block';          // ← show loading bar
+  res.innerHTML = '';
+
+  const promptMap = {
+    bullet:    'Summarise this e-mail in 3 bullet points:',
+    takeaways: 'Tell me the important take-aways from this e-mail:',
+    custom:    custom.value.trim() || 'Summarise this e-mail:'
+  };
+  const form = new FormData();
+  form.append('text',   bodyTA.value);
+  form.append('prompt', promptMap[sel.value]);
+
+  fetch('/summarise', {method:'POST', body:form})
+    .then(r=>r.json()).then(j=>{
+      load.style.display = 'none';       // ← hide loading bar
+      if (j.error){ res.textContent = j.error; }
+      else if (sel.value === 'bullet') {
+        // tidy bullet list
+        const items = j.summary
+          .split(/\n|•|^- |^– |^-\s|^•\s/m)
+          .map(t=>t.trim()).filter(Boolean);
+        res.innerHTML = `<article class="contrast"><ul>${
+          items.map(t=>`<li>${t}</li>`).join('')
+        }</ul></article>`;
+      } else {
+        res.innerHTML = `<article class="contrast"><p>${j.summary}</p></article>`;
+      }
+      reset.style.display='inline-block';
+      openStep(stepResult);
+      btn.removeAttribute('disabled');
+    });
+});
+
+/* ---------- reset ---------- */
+reset.addEventListener('click', resetWorkflow);
+</script>
+</body>
+</html>
