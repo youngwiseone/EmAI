@@ -1,0 +1,6 @@
+fastapi
+uvicorn[standard]
+python-dotenv
+extract_msg
+beautifulsoup4
+openai
